@@ -1,0 +1,179 @@
+import streamlit as st
+from binance.client import Client
+import time
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import MinMaxScaler
+from statsmodels.tsa.arima.model import ARIMA
+
+# Ganti dengan API key dan secret Anda
+api_key = 'KeSESTiqIik3Vr69un7CG14HKpDv19RlNZoAcc418N40w5QxorszMQNZjyNg1kEc'
+api_secret = 'MYzEEYVpcUtnz5FaQdZFlRtxqNDrykocSnU5fEeLz8ipY5Ma601iZiCQ7IY8BIep'
+
+# Inisialisasi client Binance
+client = Client(api_key, api_secret)
+
+# Fungsi untuk mengambil data candlestick dari Binance Futures
+def fetch_binance_data(symbol="ACTUSDT"):
+    candles = client.futures_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_1MINUTE, limit=1440)
+    df = pd.DataFrame(candles, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'])
+    df['time'] = pd.to_datetime(df['time'], unit='ms')
+    df['close'] = df['close'].astype(float)
+    df.set_index('time', inplace=True)
+    return df
+
+# Fungsi Prediksi ARIMA
+def predict_arima(df):
+    model = ARIMA(df['close'], order=(5, 1, 0))  # (p, d, q)
+    fitted_model = model.fit()
+    forecast = fitted_model.forecast(steps=5)
+    return forecast[-1]
+
+# Fungsi Prediksi Random Forest
+def predict_random_forest(df):
+    data = df['close'].values
+    scaler = MinMaxScaler()
+    scaled_data = scaler.fit_transform(data.reshape(-1, 1))
+
+    window_size = 5
+    X, y = [], []
+    for i in range(len(scaled_data) - window_size):
+        X.append(scaled_data[i:i+window_size].flatten())
+        y.append(scaled_data[i+window_size])
+    X, y = np.array(X), np.array(y)
+
+    model = RandomForestRegressor(n_estimators=100)
+    model.fit(X, y)
+
+    last_sequence = scaled_data[-window_size:].flatten().reshape(1, -1)
+    prediction = model.predict(last_sequence)[0]
+    return scaler.inverse_transform([[prediction]])[0, 0]
+
+# Fungsi untuk mengambil data kedalaman order book
+def fetch_order_book(symbol="ACTUSDT"):
+    order_book = client.futures_order_book(symbol=symbol)
+    return order_book
+
+# Fungsi untuk mengambil data transaksi terbaru
+def fetch_recent_trades(symbol="ACTUSDT"):
+    trades = client.futures_recent_trades(symbol=symbol)
+    return trades
+
+# Fungsi untuk mengambil data funding rate
+def fetch_funding_rate(symbol="ACTUSDT"):
+    funding_rate = client.futures_funding_rate(symbol=symbol)
+    return funding_rate[-1]  # Mengambil data terbaru
+
+# Fungsi untuk mengambil data open interest
+def fetch_open_interest(symbol="ACTUSDT"):
+    open_interest = client.futures_open_interest(symbol=symbol)
+    return open_interest
+
+# Fungsi untuk mengambil rasio posisi Long/Short
+def fetch_long_short_ratio(symbol="ACTUSDT"):
+    ratio = client.futures_position_information(symbol=symbol)
+    long_position_ratio = sum([p['positionAmt'] for p in ratio if float(p['positionAmt']) > 0])
+    short_position_ratio = sum([p['positionAmt'] for p in ratio if float(p['positionAmt']) < 0])
+    return {'long': long_position_ratio, 'short': short_position_ratio}
+
+# Fungsi untuk mengambil rekomendasi entry Long/Short
+def get_entry_signal():
+    # Ambil data kedalaman order book
+    depth = fetch_order_book()
+    bid_depth = float(depth['bids'][0][1])  # Total pembeli di harga tertinggi
+    ask_depth = float(depth['asks'][0][1])  # Total penjual di harga terendah
+    bid_price = float(depth['bids'][0][0])  # Harga tertinggi pembeli (Bid)
+    ask_price = float(depth['asks'][0][0])  # Harga terendah penjual (Ask)
+
+    # Ambil data transaksi terbaru
+    trades = fetch_recent_trades()
+    recent_trades = [float(trade['price']) for trade in trades]
+    avg_trade_price = np.mean(recent_trades)
+
+    # Ambil data funding rate
+    funding_rate = fetch_funding_rate()
+    funding_rate_value = float(funding_rate['fundingRate'])
+
+    # Ambil data open interest
+    open_interest = fetch_open_interest()
+    open_interest_value = float(open_interest['openInterest'])
+
+    # Ambil rasio posisi Long/Short
+    long_short_ratio = fetch_long_short_ratio()
+    long_position_ratio = long_short_ratio['long']
+    short_position_ratio = long_short_ratio['short']
+
+    signal = ''
+    entry_price = 0
+
+    if bid_depth > ask_depth and funding_rate_value > 0:
+        signal = "Long"
+        entry_price = bid_price * 0.999
+    elif ask_depth > bid_depth and funding_rate_value < 0:
+        signal = "Short"
+        entry_price = ask_price * 1.001
+    else:
+        signal = "Neutral"
+        entry_price = avg_trade_price
+
+    # Take Profit and Stop Loss Logic
+    take_profit_percentage = 0.02
+    stop_loss_percentage = 0.01
+
+    if signal == "Long":
+        take_profit_price = entry_price * (1 + take_profit_percentage)
+        stop_loss_price = entry_price * (1 - stop_loss_percentage)
+    elif signal == "Short":
+        take_profit_price = entry_price * (1 - take_profit_percentage)
+        stop_loss_price = entry_price * (1 + stop_loss_percentage)
+    else:
+        take_profit_price = entry_price
+        stop_loss_price = entry_price
+
+    return signal, entry_price, take_profit_price, stop_loss_price
+
+# Streamlit UI
+st.title("Binance Futures Trading Automation")
+
+symbol = st.text_input("Enter Symbol (e.g. ACTUSDT)", "ACTUSDT")
+df = fetch_binance_data(symbol)
+
+# Displaying Data
+st.subheader(f"Latest {symbol} Data")
+st.dataframe(df.tail())
+
+# Predictions
+st.subheader("Prediction Models")
+arima_prediction = predict_arima(df)
+random_forest_prediction = predict_random_forest(df)
+
+st.write(f"ARIMA Prediction: {arima_prediction}")
+st.write(f"Random Forest Prediction: {random_forest_prediction}")
+
+# Get Entry Signal and Display
+signal, entry_price, take_profit_price, stop_loss_price = get_entry_signal()
+
+st.subheader("Trading Signal")
+st.write(f"Signal: {signal}")
+st.write(f"Entry Price: {entry_price}")
+st.write(f"Take Profit Price: {take_profit_price}")
+st.write(f"Stop Loss Price: {stop_loss_price}")
+
+# Button to Execute Trade
+if st.button("Execute Trade"):
+    # For simulation purposes, just display the results
+    st.write("Executing Trade (Simulation)")
+
+    # Uncomment the below lines to perform actual trades (ensure correct API keys and authorization)
+    # execute_trade(signal, entry_price, take_profit_price, stop_loss_price)
+    st.success("Trade Executed (Simulation)")
+
+# Running every 300 seconds for real-time updates
+st.write("Fetching live data every 5 seconds...")
+while True:
+    time.sleep(300)
+    df = fetch_binance_data(symbol)
+    st.dataframe(df.tail())
+    st.write(f"Latest Prediction: {arima_prediction}")
+    st.write(f"Latest Random Forest Prediction: {random_forest_prediction}")
