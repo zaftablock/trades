@@ -1,7 +1,12 @@
 body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f9f9f9;
+    color: #333;
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    height: 100vh; /* Menetapkan tinggi halaman */
 }
 
 header {
@@ -41,6 +46,7 @@ nav ul li a:hover {
 
 main {
     padding: 2em;
+    flex-grow: 1; /* Membuat konten utama tumbuh untuk mengisi ruang yang tersedia */
 }
 
 section {
@@ -67,5 +73,9 @@ article.post ul, article.post ol {
 }
 
 footer {
-    margin-top: auto;
+    background-color: #333;
+    color: white;
+    text-align: center;
+    padding: 1em 0;
+    width: 100%;
 }
