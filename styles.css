@@ -53,3 +53,13 @@ ul li {
     left: 20px;
     width: 100px;
 }
+
+.center-image {
+    text-align: center;
+    margin: 20px 0;
+}
+
+.center-img {
+    max-width: 100%;
+    height: auto;
+}
