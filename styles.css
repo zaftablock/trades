@@ -46,7 +46,6 @@ nav ul li a:hover {
 
 main {
     padding: 2em;
-    flex-grow: 1; /* Membuat konten utama tumbuh untuk mengisi ruang yang tersedia */
 }
 
 section {
